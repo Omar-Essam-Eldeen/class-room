@@ -8,43 +8,126 @@ const tools = [
   { id: 'plan', label: 'Create Study Plan', icon: ClipboardList },
 ]
 
-function getPreviewTopic(input) {
-  return input.trim().split(/\s+/).slice(0, 10).join(' ')
+const stopWords = new Set([
+  'about',
+  'after',
+  'also',
+  'because',
+  'before',
+  'could',
+  'from',
+  'have',
+  'into',
+  'like',
+  'notes',
+  'study',
+  'that',
+  'their',
+  'then',
+  'there',
+  'this',
+  'topic',
+  'what',
+  'when',
+  'where',
+  'with',
+  'would',
+])
+
+const questionTemplates = [
+  'What is the simplest definition of {keyword}?',
+  'Why does {keyword} matter for the bigger topic?',
+  'What is one example that proves you understand {keyword}?',
+  'Which step in {keyword} is easiest to mix up?',
+  'How would you explain {keyword} to a younger student?',
+  'What detail about {keyword} should become a flashcard?',
+  'What is a common mistake people make with {keyword}?',
+  'How does {keyword} connect to {other}?',
+  'What problem could you solve using {keyword}?',
+  'What would change if {keyword} were missing?',
+  'Which formula, date, term, or rule anchors {keyword}?',
+  'What is one question your teacher might ask about {keyword}?',
+]
+
+const summaryOpeners = [
+  'The core idea is',
+  'The notes are mostly pointing toward',
+  'A cleaner way to frame this is',
+  'The useful pattern hiding in the notes is',
+]
+
+function extractKeywords(input) {
+  const words = input
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .split(/\s+/)
+    .filter((word) => word.length > 3 && !stopWords.has(word))
+
+  const counts = words.reduce((map, word) => {
+    map.set(word, (map.get(word) || 0) + 1)
+    return map
+  }, new Map())
+
+  return [...counts.entries()]
+    .sort((first, second) => second[1] - first[1] || first[0].localeCompare(second[0]))
+    .map(([word]) => word)
+    .slice(0, 6)
 }
 
-function buildMockResponse(tool, input) {
-  const topic = getPreviewTopic(input)
+function titleCase(value) {
+  return value
+    .split(/[\s-]+/)
+    .map((word) => `${word.slice(0, 1).toUpperCase()}${word.slice(1)}`)
+    .join(' ')
+}
+
+function pick(items, seed) {
+  return items[Math.abs(seed) % items.length]
+}
+
+function fillQuestion(template, keywords, seed) {
+  const keyword = titleCase(keywords[seed % keywords.length])
+  const other = titleCase(keywords[(seed + 1) % keywords.length] || keywords[0])
+  return template.replace('{keyword}', keyword).replace('{other}', other)
+}
+
+function buildMockResponse(tool, input, generationCount) {
+  const cleanInput = input.trim()
+  const keywords = extractKeywords(cleanInput)
+  const safeKeywords = keywords.length ? keywords : ['main idea', 'practice', 'review']
+  const topic = titleCase(safeKeywords.slice(0, 3).join(' '))
+  const seed = generationCount + cleanInput.length + safeKeywords.join('').length
 
   if (tool === 'summary') {
-    return `Here is a cleaner version of your notes about ${topic}:\n\n1. Main idea: focus on the core definition first.\n2. Key detail: connect each example to one rule or formula.\n3. Review move: turn the hardest sentence into a flashcard.`
+    const opener = pick(summaryOpeners, seed)
+    return `${opener} ${topic}.\n\n1. Main idea: ${titleCase(safeKeywords[0])} is the anchor to review first.\n2. Supporting detail: connect ${titleCase(safeKeywords[1] || safeKeywords[0])} to a concrete example.\n3. Possible gap: check whether ${titleCase(safeKeywords[2] || safeKeywords[0])} needs a formula, date, definition, or diagram.\n4. Next move: turn the hardest sentence into one flashcard and one practice question.`
   }
 
   if (tool === 'quiz') {
-    return `Quick quiz based on ${topic}:\n\n1. What is the main concept in these notes?\n2. Which detail would be easiest to confuse?\n3. Can you give one real example?\n4. What formula, date, or keyword matters most?\n5. How would you explain this to a younger student?`
+    const rotated = questionTemplates.slice(seed % questionTemplates.length).concat(questionTemplates.slice(0, seed % questionTemplates.length))
+    return `Quick quiz for ${topic}:\n\n${rotated
+      .slice(0, 6)
+      .map((template, index) => `${index + 1}. ${fillQuestion(template, safeKeywords, seed + index)}`)
+      .join('\n')}`
   }
 
   if (tool === 'explain') {
-    return `${topic} in simple words:\n\nImagine the idea as a small chain. First, understand the first link. Then ask why it connects to the next link. Once the connection makes sense, the bigger topic becomes much easier to remember.`
+    return `${topic}, simply:\n\nStart with ${titleCase(safeKeywords[0])}. Treat it like the first link in a chain. Once that link makes sense, connect it to ${titleCase(safeKeywords[1] || 'the next detail')}, then test the idea with a tiny example. If you can explain the example out loud without looking, the topic is starting to stick.`
   }
 
-  return `3-step study plan for ${topic}:\n\n1. Spend 10 minutes rereading and highlighting only the confusing parts.\n2. Spend 20 minutes solving or answering practice questions.\n3. Spend 5 minutes writing what still feels unclear so tomorrow's session starts faster.`
+  return `Study plan for ${topic}:\n\n1. Warm up: spend 8 minutes rewriting the definition of ${titleCase(safeKeywords[0])} in your own words.\n2. Build: spend 15 minutes making examples for ${titleCase(safeKeywords[1] || safeKeywords[0])}.\n3. Test: answer three quiz questions about ${titleCase(safeKeywords[2] || safeKeywords[0])} without notes.\n4. Repair: mark the one part that still feels fuzzy and make it tomorrow's first task.\n5. Close: write a two-sentence summary so your future self has a clean starting point.`
 }
 
 function MockAITools() {
   const [activeTool, setActiveTool] = useState('summary')
   const [input, setInput] = useState('')
   const [output, setOutput] = useState('')
-  const [error, setError] = useState('')
+  const [generationCount, setGenerationCount] = useState(0)
 
   const generateResponse = () => {
-    if (!input.trim()) {
-      setError('Paste notes or a topic first.')
-      setOutput('')
-      return
-    }
-
-    setError('')
-    setOutput(buildMockResponse(activeTool, input))
+    const next = generationCount + 1
+    setGenerationCount(next)
+    setOutput(buildMockResponse(activeTool, input, next))
   }
 
   return (
@@ -52,7 +135,10 @@ function MockAITools() {
       <div className="section-heading">
         <div>
           <span className="section-kicker">AI study tools mock</span>
-          <h2>Prototype helpers without API calls</h2>
+          <h2>Topic-aware helpers without API calls</h2>
+          <p className="section-support">
+            Local templates extract keywords and vary the output each time you generate.
+          </p>
         </div>
         <Sparkles size={24} aria-hidden="true" />
       </div>
@@ -71,7 +157,6 @@ function MockAITools() {
               onClick={() => {
                 setActiveTool(tool.id)
                 setOutput('')
-                setError('')
               }}
             >
               <Icon size={17} />
@@ -85,14 +170,11 @@ function MockAITools() {
         className="form-control"
         rows="5"
         value={input}
-        onChange={(event) => {
-          setInput(event.target.value)
-          setError('')
-        }}
+        onChange={(event) => setInput(event.target.value)}
         placeholder="Paste a topic, messy notes, or a chapter goal..."
         aria-label="Study text for mock AI tool"
       />
-      {error ? <p className="form-error">{error}</p> : null}
+      {!input.trim() ? <p className="inline-alert">No notes yet? Generate anyway for a useful fallback plan.</p> : null}
       <button className="btn glow-btn mt-3" type="button" onClick={generateResponse}>
         <Sparkles size={17} />
         Generate Mock Response

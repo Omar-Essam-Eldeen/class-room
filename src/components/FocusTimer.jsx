@@ -6,6 +6,7 @@ const presets = [
   { minutes: 45, label: 'Deep desk' },
   { minutes: 60, label: 'Big chapter' },
 ]
+const noop = () => {}
 
 function formatTimer(seconds) {
   const minutes = Math.floor(seconds / 60)
@@ -13,7 +14,7 @@ function formatTimer(seconds) {
   return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
 }
 
-function FocusTimer({ onComplete }) {
+function FocusTimer({ onComplete = noop }) {
   const [durationMinutes, setDurationMinutes] = useState(25)
   const [secondsLeft, setSecondsLeft] = useState(25 * 60)
   const [isRunning, setIsRunning] = useState(false)

@@ -1,5 +1,19 @@
 import { getSupabaseConfigError, supabase } from '../lib/supabaseClient'
-import { createId, getAccountType, getDisplayName, isPrivateAccountType, normalizeAccountType, todayKey } from './studyUtils'
+import {
+  canCreateRoomType,
+  canJoinRoomType,
+  createId,
+  getAccountRoomLimit,
+  getAccountTypeLabel,
+  getDefaultDesignStyle,
+  getDefaultRoomName,
+  getDisplayName,
+  getEffectiveAccountType,
+  getRoomMaxMembers,
+  hasRoomLimitReached,
+  normalizeAccountType,
+  todayKey,
+} from './studyUtils'
 
 export const DEFAULT_ROOM_NAME = 'Private Study Room'
 
@@ -9,6 +23,29 @@ function getClient() {
   }
 
   return supabase
+}
+
+function normalizeRoom(room) {
+  if (!room) return null
+
+  const roomType = normalizeAccountType(room.room_type || room.roomType)
+  const maxMembers = Number(room.max_members || room.maxMembers || getRoomMaxMembers(roomType))
+  const currentMembers = Number(room.current_members || room.currentMembers || 0)
+
+  return {
+    ...room,
+    createdBy: room.created_by || room.createdBy || room.owner_id || room.ownerId,
+    currentMembers,
+    designStyle: room.design_style || room.designStyle || getDefaultDesignStyle(roomType),
+    maxMembers,
+    memberSummaries: room.member_summaries || room.memberSummaries || [],
+    roomType,
+    room_type: roomType,
+  }
+}
+
+function getActiveMemberships(memberships) {
+  return memberships.filter((membership) => !membership.room?.deleted_at && !membership.room?.deletedAt)
 }
 
 function normalizeTask(task) {
@@ -87,7 +124,8 @@ function normalizeActivity(item) {
 }
 
 export function getRoomNameForAccountType(accountType) {
-  return `${normalizeAccountType(accountType)} Private Study Room`
+  const normalized = normalizeAccountType(accountType)
+  return `${getAccountTypeLabel(normalized)} Private Study Room`
 }
 
 export async function upsertProfile(user, accountType) {
@@ -101,8 +139,8 @@ export async function upsertProfile(user, accountType) {
   if (existingError) throw existingError
 
   const nextAccountType = normalizeAccountType(
-    accountType ||
-      existingProfile?.account_type ||
+    existingProfile?.account_type ||
+      accountType ||
       user.user_metadata?.account_type ||
       existingProfile?.display_name ||
       user.user_metadata?.display_name,
@@ -111,28 +149,15 @@ export async function upsertProfile(user, accountType) {
     id: user.id,
     email: user.email,
     account_type: nextAccountType,
-    display_name: existingProfile?.display_name || user.user_metadata?.display_name || getDisplayName(null, user),
+    display_name:
+      existingProfile?.display_name ||
+      user.user_metadata?.display_name ||
+      getAccountTypeLabel(nextAccountType) ||
+      getDisplayName(null, user),
     updated_at: new Date().toISOString(),
   }
 
   const { data, error } = await client.from('profiles').upsert(profile).select('*').single()
-  if (error) throw error
-  return data
-}
-
-export async function updateProfileAccountType(userId, accountType) {
-  const client = getClient()
-  const nextAccountType = normalizeAccountType(accountType)
-  const { data, error } = await client
-    .from('profiles')
-    .update({
-      account_type: nextAccountType,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', userId)
-    .select('*')
-    .single()
-
   if (error) throw error
   return data
 }
@@ -144,48 +169,100 @@ export async function fetchProfile(userId) {
   return data
 }
 
+export async function updateProfileAccountType(userId, accountType) {
+  const client = getClient()
+  const nextAccountType = normalizeAccountType(accountType)
+  const { data: existingProfile, error: existingError } = await client
+    .from('profiles')
+    .select('display_name')
+    .eq('id', userId)
+    .maybeSingle()
+
+  if (existingError) throw existingError
+
+  const defaultNames = new Set(['Guest', 'Magic', 'Partner', 'Student', 'Couples', 'VIP'])
+  const payload = {
+    account_type: nextAccountType,
+    updated_at: new Date().toISOString(),
+  }
+
+  if (!existingProfile?.display_name || defaultNames.has(existingProfile.display_name)) {
+    payload.display_name = getAccountTypeLabel(nextAccountType)
+  }
+
+  const { data, error } = await client
+    .from('profiles')
+    .update(payload)
+    .eq('id', userId)
+    .select('*')
+    .single()
+
+  if (error) throw error
+  return data
+}
+
 export async function fetchUserRooms(userId) {
   const client = getClient()
   const { data, error } = await client
     .from('room_members')
-    .select('id, role, room_id, rooms(id, name, owner_id, room_type, created_at)')
+    .select('id, role, room_id')
     .eq('user_id', userId)
 
   if (error) throw error
 
-  return (data || [])
-    .filter((membership) => membership.rooms)
+  const directoryRooms = await fetchRoomsDirectory()
+  const roomsById = new Map(directoryRooms.map((room) => [room.id, room]))
+
+  return getActiveMemberships((data || [])
     .map((membership) => ({
       membershipId: membership.id,
       role: membership.role,
-      room: membership.rooms,
+      room: roomsById.get(membership.room_id) || null,
     }))
+    .filter((membership) => membership.room))
 }
 
-export async function fetchActiveRoomForUser(userId) {
+export async function fetchActiveRoomForUser(userId, accountType = '') {
+  const normalizedAccountType = normalizeAccountType(accountType)
   const rooms = await fetchUserRooms(userId)
-  return rooms[0] || null
+  const matchingRoom = rooms.find((membership) => membership.room?.roomType === normalizedAccountType)
+  return matchingRoom || rooms[0] || null
 }
 
-export async function createPrivateRoomForUser(user, profile) {
+export async function fetchRoomsDirectory() {
   const client = getClient()
-  const accountType = getAccountType(profile, user)
+  const { data, error } = await client.rpc('get_room_directory')
 
-  if (!isPrivateAccountType(accountType)) {
-    throw new Error('Private rooms are available for Couples and VIP accounts.')
+  if (error) throw error
+  return (data || []).map(normalizeRoom)
+}
+
+export async function createRoomForUser({ designStyle, name, profile, roomType, user }) {
+  const client = getClient()
+  const accountType = getEffectiveAccountType(profile, user)
+  const normalizedRoomType = normalizeAccountType(roomType)
+  const memberships = await fetchUserRooms(user.id)
+
+  if (!canCreateRoomType(accountType, normalizedRoomType)) {
+    throw new Error(`${getAccountTypeLabel(accountType)} accounts cannot create ${getAccountTypeLabel(normalizedRoomType)} rooms.`)
   }
 
-  const { data: room, error: roomError } = await client
-    .from('rooms')
-    .insert({
-      id: createId(),
-      name: getRoomNameForAccountType(accountType),
-      owner_id: user.id,
-      room_type: accountType,
-    })
-    .select('*')
-    .single()
+  if (hasRoomLimitReached(accountType, memberships.length)) {
+    const limit = getAccountRoomLimit(accountType)
+    throw new Error(`${getAccountTypeLabel(accountType)} accounts can join or create up to ${limit} room${limit === 1 ? '' : 's'}.`)
+  }
 
+  const roomPayload = {
+    id: createId(),
+    created_by: user.id,
+    design_style: designStyle || getDefaultDesignStyle(normalizedRoomType),
+    max_members: getRoomMaxMembers(normalizedRoomType),
+    name: name?.trim() || getDefaultRoomName(normalizedRoomType),
+    owner_id: user.id,
+    room_type: normalizedRoomType,
+  }
+
+  const { data: room, error: roomError } = await client.from('rooms').insert(roomPayload).select('*').single()
   if (roomError) throw roomError
 
   const { data: membership, error: membershipError } = await client
@@ -202,18 +279,97 @@ export async function createPrivateRoomForUser(user, profile) {
   if (membershipError) throw membershipError
 
   await insertActivity({
-    actor: accountType,
-    message: `Created a ${accountType} private study room.`,
+    actor: getAccountTypeLabel(accountType),
+    message: `Created ${room.name}.`,
     roomId: room.id,
     type: 'system',
     userId: user.id,
   })
+  await awardProfilePoints(8)
 
   return {
     membershipId: membership.id,
     role: membership.role,
-    room,
+    room: normalizeRoom(room),
   }
+}
+
+export async function createPrivateRoomForUser(user, profile) {
+  const accountType = getEffectiveAccountType(profile, user)
+  const roomType = normalizeAccountType(accountType)
+
+  if (roomType === 'student') {
+    throw new Error('Private couples rooms are available for Couples and VIP accounts.')
+  }
+
+  return createRoomForUser({
+    name: getRoomNameForAccountType(roomType),
+    profile,
+    roomType,
+    user,
+  })
+}
+
+export async function joinRoomForUser({ profile, room, user }) {
+  const client = getClient()
+  const accountType = getEffectiveAccountType(profile, user)
+  const memberships = await fetchUserRooms(user.id)
+
+  if (!canJoinRoomType(accountType, room)) {
+    throw new Error(`${getAccountTypeLabel(accountType)} accounts cannot join this room.`)
+  }
+
+  if (hasRoomLimitReached(accountType, memberships.length)) {
+    const limit = getAccountRoomLimit(accountType)
+    throw new Error(`${getAccountTypeLabel(accountType)} accounts can join or create up to ${limit} room${limit === 1 ? '' : 's'}.`)
+  }
+
+  const { data: membership, error } = await client
+    .from('room_members')
+    .insert({
+      id: createId(),
+      room_id: room.id,
+      user_id: user.id,
+      role: 'member',
+    })
+    .select('*')
+    .single()
+
+  if (error) throw error
+
+  await insertActivity({
+    actor: getAccountTypeLabel(accountType),
+    message: `Joined ${room.name}.`,
+    roomId: room.id,
+    type: 'system',
+    userId: user.id,
+  })
+  await awardProfilePoints(3)
+
+  return membership
+}
+
+export async function leaveRoomForUser({ roomId, userId }) {
+  const client = getClient()
+  const { error } = await client.from('room_members').delete().eq('room_id', roomId).eq('user_id', userId)
+  if (error) throw error
+}
+
+export async function deleteRoomForUser(roomId) {
+  const client = getClient()
+  const { error } = await client
+    .from('rooms')
+    .update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq('id', roomId)
+
+  if (error) throw error
+  await awardProfilePoints(5)
+}
+
+export async function awardProfilePoints(pointDelta = 1) {
+  const client = getClient()
+  const { error } = await client.rpc('award_profile_points', { point_delta: pointDelta })
+  if (error) throw error
 }
 
 export async function fetchRoomData(roomId) {

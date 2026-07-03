@@ -2,21 +2,30 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { LogOut, ShieldCheck, UserRoundCheck } from 'lucide-react'
 import { useAuth } from '../context/useAuth'
-import { ACCOUNT_TYPES, isPrivateAccountType } from '../data/studyUtils'
+import { ACCOUNT_TYPES, getAccountTypeLabel, isPrivateAccountType } from '../data/studyUtils'
 
 const accountTypeHelp = {
-  Student: 'Public pages and dashboard',
-  Couples: 'Couples private room access',
-  VIP: 'VIP private room access',
+  student: 'Basic study dashboard and public rooms',
+  couples: 'Private couples room and shared rituals',
+  vip: 'Premium tools, previews, and VIP rooms',
+}
+
+function getHomeRoute(accountType) {
+  if (accountType === 'vip') return '/vip'
+  if (accountType === 'couples') return '/couples'
+  return '/student'
 }
 
 function AccessPage() {
   const {
     accountType,
+    accountTypeLabel,
     activeRoom,
     authConfigured,
     error: authError,
     loading,
+    profile,
+    realAccountType,
     roomLoading,
     signIn,
     signOut,
@@ -25,7 +34,7 @@ function AccessPage() {
     user,
   } = useAuth()
   const [mode, setMode] = useState('signin')
-  const [draftAccountType, setDraftAccountType] = useState('Student')
+  const [draftAccountType, setDraftAccountType] = useState('student')
   const [form, setForm] = useState({
     email: '',
     password: '',
@@ -34,7 +43,7 @@ function AccessPage() {
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const navigate = useNavigate()
-  const selectedAccountType = user ? accountType : draftAccountType
+  const selectedAccountType = user ? realAccountType : draftAccountType
 
   const updateField = (field, value) => {
     setForm((current) => ({ ...current, [field]: value }))
@@ -44,18 +53,25 @@ function AccessPage() {
 
   const chooseAccountType = async (nextAccountType) => {
     setError('')
-    setMessage('')
 
     if (!user) {
       setDraftAccountType(nextAccountType)
-      setMessage(`${nextAccountType} selected for your account type.`)
+      setMessage(`${getAccountTypeLabel(nextAccountType)} selected for signup.`)
+      return
+    }
+
+    if (nextAccountType === realAccountType) {
+      setMessage(`${getAccountTypeLabel(nextAccountType)} is already saved on your profile.`)
       return
     }
 
     setSubmitting(true)
+    setMessage('')
+
     try {
       await updateAccountType(nextAccountType)
-      setMessage(`${nextAccountType} account type saved to your Supabase profile.`)
+      setMessage(`${getAccountTypeLabel(nextAccountType)} is now saved on your Supabase profile.`)
+      navigate(getHomeRoute(nextAccountType))
     } catch (nextError) {
       setError(nextError.message)
     } finally {
@@ -78,8 +94,8 @@ function AccessPage() {
         })
 
         if (result.session) {
-          setMessage('Account created and signed in. Your profile type is saved.')
-          navigate(isPrivateAccountType(selectedAccountType) ? '/our-room' : '/dashboard')
+          setMessage('Account created and signed in. Your account type is locked to this profile.')
+          navigate(getHomeRoute(selectedAccountType))
         } else {
           setMessage('Account created. Check your email if confirmation is enabled in Supabase.')
         }
@@ -105,7 +121,7 @@ function AccessPage() {
 
     try {
       await signOut()
-      setMessage('Signed out. You can still browse the public study dashboard.')
+      setMessage('Signed out. You are browsing as a visitor.')
     } catch (nextError) {
       setError(nextError.message)
     } finally {
@@ -123,13 +139,13 @@ function AccessPage() {
           <span className="section-kicker">Supabase access</span>
           <h1>Sign in to Class Room</h1>
           <p>
-            Class Room uses Supabase Auth, profile account types, and secure room membership
-            policies. Student accounts can study publicly, while Couples and VIP accounts can create
-            a private room.
+            Choose Student, Couples, or VIP during signup, then adjust the saved profile type here
+            whenever you want to test a different access level.
           </p>
           <div className="prototype-note">
             <ShieldCheck size={20} />
-            Private room data is only available to signed-in room members.
+            Signed-out visitors can browse public pages and room metadata, but only real accounts
+            can join, create, or open rooms.
           </div>
         </div>
 
@@ -137,7 +153,7 @@ function AccessPage() {
           <div className="section-heading">
             <div>
               <span className="section-kicker">Account type</span>
-              <h2>{user ? 'Your profile' : mode === 'signin' ? 'Log in' : 'Create account'}</h2>
+              <h2>{user ? `${accountTypeLabel} profile` : mode === 'signin' ? 'Log in' : 'Create account'}</h2>
             </div>
             <UserRoundCheck size={24} aria-hidden="true" />
           </div>
@@ -153,7 +169,7 @@ function AccessPage() {
                 onClick={() => chooseAccountType(type)}
                 disabled={busy}
               >
-                <span>{type}</span>
+                <span>{getAccountTypeLabel(type)}</span>
                 <small>{accountTypeHelp[type]}</small>
               </button>
             ))}
@@ -161,14 +177,15 @@ function AccessPage() {
 
           {user ? (
             <div className="success-message">
-              <strong>{accountType}</strong> account is signed in.
-              {activeRoom ? (
+              <strong>{accountTypeLabel}</strong> account is signed in.
+              {activeRoom && privateType ? (
                 <span> Room ready: {activeRoom.name}</span>
               ) : privateType ? (
-                <span> You can create a private room from Our Room.</span>
+                <span> Open Our Room to create your private room.</span>
               ) : (
-                <span> Private rooms are for Couples and VIP accounts.</span>
+                <span> Use Student tools and public rooms from your dashboard.</span>
               )}
+              <span> Stars: {profile?.stars || 0}. Badges: {profile?.public_badge_count || 0}.</span>
             </div>
           ) : (
             <>
@@ -194,8 +211,8 @@ function AccessPage() {
               <form onSubmit={handleSubmit}>
                 {mode === 'signup' ? (
                   <p className="inline-alert">
-                    New accounts start as <strong>{selectedAccountType}</strong>. You can change
-                    this profile type after logging in.
+                    New accounts start as <strong>{getAccountTypeLabel(selectedAccountType)}</strong>. This
+                    profile type is stored in Supabase.
                   </p>
                 ) : null}
                 <label className="form-label" htmlFor="auth-email">
@@ -238,8 +255,11 @@ function AccessPage() {
           <div className="access-actions">
             {user ? (
               <>
-                <Link className="btn glow-btn" to="/our-room">
-                  Open Private Room
+                <Link className="btn glow-btn" to="/dashboard">
+                  Open Dashboard
+                </Link>
+                <Link className="btn soft-btn" to="/rooms">
+                  Rooms Directory
                 </Link>
                 <button className="btn soft-btn" type="button" onClick={handleLogout} disabled={busy}>
                   <LogOut size={17} />
@@ -247,8 +267,8 @@ function AccessPage() {
                 </button>
               </>
             ) : (
-              <Link className="btn soft-btn" to="/dashboard">
-                Continue as Student
+              <Link className="btn soft-btn" to="/rooms">
+                Browse Rooms
               </Link>
             )}
             <Link className="btn link-btn" to="/">

@@ -1,12 +1,15 @@
 import { useState } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
-import { BookOpen, LayoutDashboard, LockKeyhole, Menu, Sparkles, X } from 'lucide-react'
+import { BookOpen, DoorOpen, LayoutDashboard, LockKeyhole, Menu, Sparkles, Star, X } from 'lucide-react'
 import { useAuth } from '../context/useAuth'
+import { getAccountTypeLabel, isPrivateAccountType } from '../data/studyUtils'
 
 function Navbar() {
   const [open, setOpen] = useState(false)
   const location = useLocation()
-  const { accountType, user } = useAuth()
+  const { accountType, profile, user } = useAuth()
+  const accountLabel = getAccountTypeLabel(accountType)
+  const homeRoute = accountType === 'vip' ? '/vip' : accountType === 'couples' ? '/couples' : '/student'
   const closeMenu = () => setOpen(false)
 
   return (
@@ -47,21 +50,44 @@ function Navbar() {
               </NavLink>
             </li>
             <li className="nav-item">
-              <NavLink className="nav-link" to="/dashboard" onClick={closeMenu}>
-                <LayoutDashboard size={17} />
-                Dashboard
+              <NavLink className="nav-link" to="/rooms" onClick={closeMenu}>
+                <DoorOpen size={17} />
+                Rooms
               </NavLink>
             </li>
-            <li className="nav-item">
-              <NavLink className="nav-link" to="/our-room" onClick={closeMenu}>
-                <LockKeyhole size={17} />
-                Our Room
-              </NavLink>
-            </li>
+            {user ? (
+              <li className="nav-item">
+                <NavLink className="nav-link" to={homeRoute} onClick={closeMenu}>
+                  {accountLabel}
+                </NavLink>
+              </li>
+            ) : null}
+            {user ? (
+              <li className="nav-item">
+                <NavLink className="nav-link" to="/dashboard" onClick={closeMenu}>
+                  <LayoutDashboard size={17} />
+                  Dashboard
+                </NavLink>
+              </li>
+            ) : null}
+            {user && isPrivateAccountType(accountType) ? (
+              <li className="nav-item">
+                <NavLink className="nav-link" to="/our-room" onClick={closeMenu}>
+                  <LockKeyhole size={17} />
+                  Our Room
+                </NavLink>
+              </li>
+            ) : null}
             <li className="nav-item ms-lg-2">
               <NavLink className="btn btn-sm glow-btn" to="/access" onClick={closeMenu}>
                 <Sparkles size={16} />
-                {user ? accountType : 'Sign in'}
+                {user ? accountLabel : 'Sign in'}
+                {user ? (
+                  <span className="nav-star-count">
+                    <Star size={13} />
+                    {profile?.stars || 0}
+                  </span>
+                ) : null}
               </NavLink>
             </li>
           </ul>

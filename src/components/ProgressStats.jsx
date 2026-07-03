@@ -54,7 +54,7 @@ function ProgressStats({ tasks, checkins, sessions }) {
         />
       </div>
 
-      <div className="progress-stack glass-card">
+      <div className="progress-stack">
         <div>
           <span>Task completion</span>
           <strong>{taskProgress}%</strong>

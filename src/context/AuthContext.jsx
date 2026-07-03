@@ -2,15 +2,40 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { getSupabaseConfigError, isSupabaseConfigured, supabase } from '../lib/supabaseClient'
 import {
   createPrivateRoomForUser,
-  fetchActiveRoomForUser,
+  deleteRoomForUser,
+  fetchUserRooms,
+  leaveRoomForUser,
   updateProfileAccountType,
   upsertProfile,
 } from '../data/supabaseData'
-import { getAccountType, getDisplayName } from '../data/studyUtils'
+import { getAccountType, getAccountTypeLabel, getDisplayName, getEffectiveAccountType } from '../data/studyUtils'
 import { AuthContext } from './authContextValue'
+
+const ACTIVE_ROOM_KEY = 'classroom-active-room-id'
 
 function getAuthErrorMessage(error) {
   return error?.message || 'Something went wrong with authentication.'
+}
+
+function readActiveRoomPreference() {
+  return globalThis.localStorage?.getItem(ACTIVE_ROOM_KEY) || ''
+}
+
+function writeActiveRoomPreference(roomId) {
+  if (roomId) {
+    globalThis.localStorage?.setItem(ACTIVE_ROOM_KEY, roomId)
+  } else {
+    globalThis.localStorage?.removeItem(ACTIVE_ROOM_KEY)
+  }
+}
+
+function chooseActiveMembership(memberships, accountType) {
+  const preferredRoomId = readActiveRoomPreference()
+  const preferred = memberships.find((membership) => membership.room?.id === preferredRoomId)
+  if (preferred) return preferred
+
+  const matchingType = memberships.find((membership) => membership.room?.roomType === accountType)
+  return matchingType || memberships[0] || null
 }
 
 export function AuthProvider({ children }) {
@@ -18,6 +43,7 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null)
   const [activeRoom, setActiveRoom] = useState(null)
   const [membershipRole, setMembershipRole] = useState('')
+  const [userRooms, setUserRooms] = useState([])
   const [loading, setLoading] = useState(isSupabaseConfigured)
   const [roomLoading, setRoomLoading] = useState(false)
   const [error, setError] = useState(() => (isSupabaseConfigured ? '' : getSupabaseConfigError()))
@@ -27,6 +53,7 @@ export function AuthProvider({ children }) {
       setProfile(null)
       setActiveRoom(null)
       setMembershipRole('')
+      setUserRooms([])
       return
     }
 
@@ -35,15 +62,19 @@ export function AuthProvider({ children }) {
 
     try {
       const nextProfile = await upsertProfile(nextSession.user, preferredAccountType)
-      const membership = await fetchActiveRoomForUser(nextSession.user.id)
+      const nextAccountType = getEffectiveAccountType(nextProfile, nextSession.user)
+      const memberships = await fetchUserRooms(nextSession.user.id)
+      const activeMembership = chooseActiveMembership(memberships, nextAccountType)
       setProfile(nextProfile)
-      setActiveRoom(membership?.room || null)
-      setMembershipRole(membership?.role || '')
+      setUserRooms(memberships)
+      setActiveRoom(activeMembership?.room || null)
+      setMembershipRole(activeMembership?.role || '')
     } catch (nextError) {
       setError(nextError.message)
       setProfile(null)
       setActiveRoom(null)
       setMembershipRole('')
+      setUserRooms([])
     } finally {
       setRoomLoading(false)
     }
@@ -85,6 +116,7 @@ export function AuthProvider({ children }) {
     async ({ accountType, email, password }) => {
       if (!isSupabaseConfigured) throw new Error(getSupabaseConfigError())
 
+      const accountTypeLabel = getAccountTypeLabel(accountType)
       setError('')
       const { data, error: signUpError } = await supabase.auth.signUp({
         email,
@@ -92,7 +124,7 @@ export function AuthProvider({ children }) {
         options: {
           data: {
             account_type: accountType,
-            display_name: accountType,
+            display_name: accountTypeLabel,
           },
         },
       })
@@ -144,19 +176,29 @@ export function AuthProvider({ children }) {
     setProfile(null)
     setActiveRoom(null)
     setMembershipRole('')
+    setUserRooms([])
+    writeActiveRoomPreference('')
   }, [])
 
   const updateAccountType = useCallback(
-    async (accountType) => {
-      if (!session?.user) throw new Error('Sign in before changing account type.')
+    async (nextAccountType) => {
+      if (!session?.user) throw new Error('Sign in before changing your account type.')
       if (!isSupabaseConfigured) throw new Error(getSupabaseConfigError())
 
+      setRoomLoading(true)
       setError('')
-      const nextProfile = await updateProfileAccountType(session.user.id, accountType)
-      setProfile(nextProfile)
-      return nextProfile
+
+      try {
+        await updateProfileAccountType(session.user.id, nextAccountType)
+        await loadUserWorkspace(session)
+      } catch (nextError) {
+        setError(nextError.message)
+        throw nextError
+      } finally {
+        setRoomLoading(false)
+      }
     },
-    [session],
+    [loadUserWorkspace, session],
   )
 
   const createPrivateRoom = useCallback(async () => {
@@ -169,8 +211,8 @@ export function AuthProvider({ children }) {
 
     try {
       const membership = await createPrivateRoomForUser(session.user, profile)
-      setActiveRoom(membership.room)
-      setMembershipRole(membership.role)
+      writeActiveRoomPreference(membership.room.id)
+      await loadUserWorkspace(session)
       return membership
     } catch (nextError) {
       setError(nextError.message)
@@ -178,46 +220,115 @@ export function AuthProvider({ children }) {
     } finally {
       setRoomLoading(false)
     }
-  }, [profile, session])
+  }, [loadUserWorkspace, profile, session])
+
+  const setActiveRoomById = useCallback(
+    (roomId) => {
+      const membership = userRooms.find((item) => item.room?.id === roomId)
+      if (!membership) throw new Error('You are not a member of that room.')
+
+      writeActiveRoomPreference(roomId)
+      setActiveRoom(membership.room)
+      setMembershipRole(membership.role)
+    },
+    [userRooms],
+  )
+
+  const leaveRoom = useCallback(
+    async (roomId) => {
+      if (!session?.user) throw new Error('Sign in before leaving a room.')
+
+      setRoomLoading(true)
+      setError('')
+
+      try {
+        await leaveRoomForUser({ roomId, userId: session.user.id })
+        if (activeRoom?.id === roomId) writeActiveRoomPreference('')
+        await loadUserWorkspace(session)
+      } catch (nextError) {
+        setError(nextError.message)
+        throw nextError
+      } finally {
+        setRoomLoading(false)
+      }
+    },
+    [activeRoom, loadUserWorkspace, session],
+  )
+
+  const deleteRoom = useCallback(
+    async (roomId) => {
+      if (!session?.user) throw new Error('Sign in before deleting a room.')
+
+      setRoomLoading(true)
+      setError('')
+
+      try {
+        await deleteRoomForUser(roomId)
+        if (activeRoom?.id === roomId) writeActiveRoomPreference('')
+        await loadUserWorkspace(session)
+      } catch (nextError) {
+        setError(nextError.message)
+        throw nextError
+      } finally {
+        setRoomLoading(false)
+      }
+    },
+    [activeRoom, loadUserWorkspace, session],
+  )
 
   const refreshWorkspace = useCallback(async () => {
     await loadUserWorkspace(session)
   }, [loadUserWorkspace, session])
 
+  const realAccountType = getAccountType(profile, session?.user)
+  const accountType = getEffectiveAccountType(profile, session?.user)
+
   const value = useMemo(
     () => ({
       activeRoom,
-      accountType: getAccountType(profile, session?.user),
+      accountType,
+      accountTypeLabel: getAccountTypeLabel(accountType),
       authConfigured: isSupabaseConfigured,
       createPrivateRoom,
+      deleteRoom,
       displayName: getDisplayName(profile, session?.user),
       error,
+      leaveRoom,
       loading,
       membershipRole,
       profile,
+      realAccountType,
       refreshWorkspace,
       roomLoading,
       session,
+      setActiveRoomById,
       signIn,
       signOut,
       signUp,
       updateAccountType,
       user: session?.user || null,
+      userRooms,
     }),
     [
+      accountType,
       activeRoom,
       createPrivateRoom,
+      deleteRoom,
       error,
+      leaveRoom,
       loading,
       membershipRole,
       profile,
+      realAccountType,
       refreshWorkspace,
       roomLoading,
       session,
+      setActiveRoomById,
       signIn,
       signOut,
       signUp,
       updateAccountType,
+      userRooms,
     ],
   )
 

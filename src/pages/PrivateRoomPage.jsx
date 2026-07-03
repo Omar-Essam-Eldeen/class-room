@@ -7,6 +7,7 @@ import MockAITools from '../components/MockAITools'
 import MotivationBox from '../components/MotivationBox'
 import NotesBoard from '../components/NotesBoard'
 import ProgressStats from '../components/ProgressStats'
+import RoomMembershipPanel from '../components/RoomMembershipPanel'
 import SessionFeedback from '../components/SessionFeedback'
 import TaskBoard from '../components/TaskBoard'
 import { useAuth } from '../context/useAuth'
@@ -34,8 +35,8 @@ const emptyRoomData = {
 }
 
 function PrivateRoomPage() {
-  const { accountType, activeRoom, user } = useAuth()
-  const currentUser = accountType
+  const { accountTypeLabel, activeRoom, user } = useAuth()
+  const currentUser = accountTypeLabel
   const roomId = activeRoom?.id
   const userId = user?.id
   const [roomData, setRoomData] = useState(emptyRoomData)
@@ -276,6 +277,7 @@ function PrivateRoomPage() {
       <section className="container">
         {error ? <p className="form-error">{error}</p> : null}
         {saving ? <p className="inline-alert">Saving to Supabase...</p> : null}
+        <RoomMembershipPanel />
         <header className="room-header glass-card">
           <div>
             <span className="section-kicker">Private study room</span>

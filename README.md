@@ -1,6 +1,6 @@
 # Class Room
 
-Class Room is a cozy study dashboard prototype for people who want to study with more focus, accountability, and encouragement. The app centers on account types: Student for public study tools, and Couples or VIP for private shared rooms where members can check in, track study progress, manage tasks, run focus sprints, save notes, reflect on sessions, and leave motivational messages.
+Class Room is a cozy study dashboard prototype for people who want to study with more focus, accountability, and encouragement. Signed-out visitors can browse public pages and safe room metadata. Real Supabase profiles use Student, Couples, or VIP account types: Student accounts get personal study tools and public rooms, Couples accounts get warmer shared-room workflows, and VIP accounts get premium tools, page previews, VIP rooms, and richer analytics previews.
 
 This is currently a Supabase-backed React prototype. It uses Supabase Auth for accounts, Supabase Postgres for room data, and Row Level Security policies to protect private room records.
 
@@ -25,8 +25,10 @@ Instead of being only a task tracker, the app combines practical study tools wit
 
 - Landing page with a product overview and demo entry points.
 - Features page describing the study tools.
-- Access page for Supabase sign up, login, logout, and account-type selection.
-- Dashboard page with a broader study overview.
+- Access page for Supabase sign up, login, logout, and signup-time account-type selection.
+- Rooms Directory page for public room metadata, search, filters, sorting, creation, and joining.
+- Room membership management for viewing joined rooms, switching the active room, leaving rooms, and deleting owned rooms.
+- Role dashboards for Student, Couples, and VIP accounts.
 - Access denied page for users without private-room access.
 
 ### Private Study Room
@@ -44,6 +46,33 @@ The `/our-room` page is the heart of the prototype. It includes:
 - Mock AI tools for prototype-only study assistance.
 - Motivation box with quotes and encouragement prompts.
 - Activity feed showing recent room actions.
+
+### Rooms Directory
+
+The `/rooms` page is public and shows safe room metadata only:
+
+- Room name, type, status, design style, member count, capacity, and available tool list.
+- Public-safe member summaries with display name, account type, joined-room count, activity score, and public badge/star count.
+- Search by room name.
+- Filters for room type and status.
+- Sorting by type priority or crowdedness.
+- Create Room modal for signed-in users.
+- Join behavior that respects account type and capacity rules.
+- A Preview button that is separate from Join, including VIP previews for full rooms.
+
+The directory does not expose private room content such as tasks, notes, check-ins, session reports, or member private details.
+
+Room limits:
+
+- Student: max 1 joined/created room.
+- Couples: max 3 joined/created rooms.
+- VIP: max 5 joined/created rooms.
+
+Room capacities:
+
+- Student rooms: 15 members.
+- Couples rooms: 2 members.
+- VIP rooms: 5 members.
 
 ## Tech Stack
 
@@ -78,7 +107,7 @@ The schema creates:
 - `encouragements`
 - `activity`
 
-It also enables Row Level Security so only room members can read or write room data.
+It also enables Row Level Security so only allowed room members can read or write private room data. Public directory metadata is served through a safe RPC that does not expose private tasks, notes, check-ins, sessions, messages, emails, or private profile details.
 
 Create a local environment file:
 
@@ -147,21 +176,37 @@ These files are important because Class Room uses React Router. Without an SPA f
 
 Class Room uses real Supabase Auth accounts plus a profile `account_type`.
 
-Available account types:
+Access states:
 
-- Student: can access public pages and the dashboard, but cannot create or enter a private room.
-- Couples: can create or access a Couples private study room.
-- VIP: can create or access a VIP private study room.
+- Signed-out visitor: can access `/`, `/features`, `/access`, and `/rooms` only.
+- Student: signed-in basic account. Can access `/student`, `/dashboard`, `/rooms`, and Student/public rooms.
+- Couples: signed-in couples account. Can access `/couples`, `/dashboard`, `/rooms`, and `/our-room`.
+- VIP: signed-in premium account. Can access `/vip`, `/vip/overview`, `/dashboard`, `/rooms`, `/our-room`, `/student-preview`, and `/couples-preview`.
 
-Clicking Student, Couples, or VIP while logged in updates the signed-in user's Supabase profile. Student is not a logout mode.
+Account type is selected during signup/profile setup and stored in `profiles.account_type` as one of:
 
-To enter `/our-room`, a user must be signed in, have a Couples or VIP profile, and belong to the room through `room_members`. If a Couples/VIP user has no membership yet, `/our-room` shows a friendly setup screen with **Create My Private Room**. That action creates a `rooms` row, adds the current user to `room_members` as `owner`, and then opens the private room.
+- `student`
+- `couples`
+- `vip`
+
+Signed-out visitor is not stored as an account type. The Access page can update a signed-in user's saved `profiles.account_type` between Student, Couples, and VIP for prototype testing. Logout is always a separate button and is not tied to Student/Couples/VIP selection.
+
+To enter `/our-room`, a user must be signed in, have effective Couples or VIP access, and belong to a matching room through `room_members`. If a Couples or VIP user has no room yet, the page says "You do not have a private room yet." and shows "Create My Private Room." If a user belongs to multiple rooms, the app stores an active-room preference in `localStorage` and still checks Supabase membership before loading data. Student users see the friendly locked message: "Private couples rooms are available for Couples and VIP accounts."
+
+Rewards:
+
+- Profiles start with a small signup star balance.
+- Creating rooms, joining rooms, and daily check-ins award prototype stars/activity points.
+- Public badge count increases as stars grow.
+- Trial access fields, `trial_account_type` and `trial_expires_at`, keep temporary Couples/VIP rewards separate from the real `account_type`.
 
 ## Current Prototype Limitations
 
 - Supabase must be configured before sign up, login, and room data will work.
-- The app creates private rooms only when a Couples or VIP user clicks **Create My Private Room**.
+- The app creates private rooms only when a Couples or VIP user clicks the room setup button.
+- Account type switching is prototype-friendly and does not include billing, subscription validation, or production upgrade approvals.
 - A production invite/join flow for adding a second real user to the same room still needs to be built.
+- The Rooms Directory uses safe public metadata and membership-protected private content, but production should add more robust invite and moderation flows.
 - Mock AI tools do not call a real AI API.
 - Real-time room sync is not wired yet.
 - Password reset and email verification settings depend on Supabase project configuration.

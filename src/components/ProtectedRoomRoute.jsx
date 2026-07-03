@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { LockKeyhole, Sparkles } from 'lucide-react'
 import { useAuth } from '../context/useAuth'
-import { isPrivateAccountType } from '../data/studyUtils'
+import { getAccountTypeLabel, isPrivateAccountType } from '../data/studyUtils'
 
 function ProtectedRoomRoute({ children }) {
   const {
@@ -13,7 +13,9 @@ function ProtectedRoomRoute({ children }) {
     error,
     loading,
     roomLoading,
+    setActiveRoomById,
     user,
+    userRooms,
   } = useAuth()
   const [setupError, setSetupError] = useState('')
   const navigate = useNavigate()
@@ -61,18 +63,18 @@ function ProtectedRoomRoute({ children }) {
       <main className="page-shell locked-page">
         <section className="glass-card locked-card">
           <LockKeyhole size={34} aria-hidden="true" />
-          <span className="section-kicker">Private room locked</span>
-          <h1>Private rooms are for Couples and VIP accounts.</h1>
+          <span className="section-kicker">Student account</span>
+          <h1>Private couples rooms are available for Couples and VIP accounts.</h1>
           <p>
-            Your Student profile can use the public pages and dashboard. Switch to Couples or VIP
-            from the Access page when you are ready to create a shared study room.
+            Your Student dashboard still has public rooms, a focus timer, limited notes, and basic
+            progress tools. Private shared rituals stay reserved for upgraded accounts.
           </p>
           <div className="locked-actions">
-            <Link className="btn glow-btn" to="/access">
-              Change Account Type
+            <Link className="btn glow-btn" to="/student">
+              Student Dashboard
             </Link>
-            <Link className="btn soft-btn" to="/dashboard">
-              Back to Dashboard
+            <Link className="btn soft-btn" to="/rooms">
+              Browse Public Rooms
             </Link>
           </div>
         </section>
@@ -80,24 +82,54 @@ function ProtectedRoomRoute({ children }) {
     )
   }
 
-  if (!activeRoom) {
+  if (!activeRoom || activeRoom.roomType !== accountType) {
+    const roomLabel = getAccountTypeLabel(accountType)
+    const actionLabel = 'Create My Private Room'
+    const matchingRooms = userRooms.filter((membership) => membership.room?.roomType === accountType)
+
+    if (matchingRooms.length) {
+      return (
+        <main className="page-shell locked-page">
+          <section className="glass-card locked-card">
+            <Sparkles size={34} aria-hidden="true" />
+            <span className="section-kicker">{roomLabel} room selector</span>
+            <h1>Choose your active room.</h1>
+            <p>You belong to more than one room. Pick the one you want `/our-room` to open.</p>
+            <div className="membership-room-list">
+              {matchingRooms.map((membership) => (
+                <article className="membership-room" key={membership.room.id}>
+                  <div>
+                    <strong>{membership.room.name}</strong>
+                    <span>{membership.role}</span>
+                  </div>
+                  <button className="btn glow-btn" type="button" onClick={() => setActiveRoomById(membership.room.id)}>
+                    Set Active Room
+                  </button>
+                </article>
+              ))}
+            </div>
+          </section>
+        </main>
+      )
+    }
+
     return (
       <main className="page-shell locked-page">
         <section className="glass-card locked-card">
           <Sparkles size={34} aria-hidden="true" />
-          <span className="section-kicker">{accountType} room setup</span>
+          <span className="section-kicker">{roomLabel} setup</span>
           <h1>You do not have a private room yet.</h1>
           <p>
-            Create a cozy private study room, become the owner, and start saving tasks, check-ins,
+            Create your own secure study room, become the owner, and start saving tasks, check-ins,
             notes, focus sessions, encouragement, and activity to Supabase.
           </p>
           {setupError || error ? <p className="form-error">{setupError || error}</p> : null}
           <div className="locked-actions">
             <button className="btn glow-btn" type="button" onClick={handleCreateRoom}>
-              Create My Private Room
+              {actionLabel}
             </button>
-            <Link className="btn soft-btn" to="/dashboard">
-              Back to Dashboard
+            <Link className="btn soft-btn" to="/rooms">
+              Browse Rooms
             </Link>
           </div>
         </section>
