@@ -89,7 +89,7 @@ function LandingPage() {
                 <h3>{step}</h3>
                 <p>
                   {index === 0
-                    ? 'Pick your demo identity and unlock the room when it is private.'
+                    ? 'Sign up or log in, then open the private room when your membership is ready.'
                     : 'Keep the workflow light enough to repeat every day.'}
                 </p>
               </article>

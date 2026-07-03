@@ -584,16 +584,11 @@
   color: var(--muted);
 }
 
-.passcode-row,
 .task-form,
 .notes-form,
 .encouragement-form {
   display: grid;
   gap: 0.75rem;
-}
-
-.passcode-row {
-  grid-template-columns: 1fr auto;
 }
 
 .form-control,
@@ -1387,7 +1382,6 @@
   }
 
   .user-choice-grid,
-  .passcode-row,
   .task-form,
   .notes-form {
     grid-template-columns: 1fr;

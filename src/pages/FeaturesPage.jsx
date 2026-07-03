@@ -62,8 +62,8 @@ function FeaturesPage() {
           <span className="section-kicker">Class Room features</span>
           <h1>Built for daily study momentum</h1>
           <p>
-            The prototype combines public pages, a limited demo dashboard, and a private room flow
-            for Magic and Partner, all powered by localStorage for now.
+            The prototype combines public pages, a Supabase-backed dashboard, and a protected
+            private room flow for Couples and VIP accounts.
           </p>
         </div>
       </section>

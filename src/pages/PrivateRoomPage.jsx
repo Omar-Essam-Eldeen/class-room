@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { BadgeCheck, Crown, Flame, HeartHandshake, Sparkles, Target, UsersRound } from 'lucide-react'
 import ActivityFeed from '../components/ActivityFeed'
 import CheckInCard from '../components/CheckInCard'
@@ -9,97 +9,225 @@ import NotesBoard from '../components/NotesBoard'
 import ProgressStats from '../components/ProgressStats'
 import SessionFeedback from '../components/SessionFeedback'
 import TaskBoard from '../components/TaskBoard'
+import { useAuth } from '../context/useAuth'
 import {
-  MEMBERS,
-  STORAGE_KEYS,
-  computeCurrentStreak,
-  createActivity,
-  ensureDemoData,
-  getStoredUser,
-  getWeekHours,
-  readStorage,
-  todayKey,
-  writeStorage,
-} from '../data/storage'
+  deleteNote,
+  deleteTask,
+  fetchRoomData,
+  insertActivity,
+  insertEncouragement,
+  insertNote,
+  insertSession,
+  insertTask,
+  updateTaskStatus,
+  upsertCheckin,
+} from '../data/supabaseData'
+import { MEMBERS, computeCurrentStreak, getWeekHours, todayKey } from '../data/studyUtils'
+
+const emptyRoomData = {
+  activity: [],
+  checkins: [],
+  encouragements: [],
+  notes: [],
+  sessions: [],
+  tasks: [],
+}
 
 function PrivateRoomPage() {
-  const currentUser = getStoredUser()
-  const [tasks, setTasks] = useState(() => {
-    ensureDemoData()
-    return readStorage(STORAGE_KEYS.tasks, [])
-  })
-  const [checkins, setCheckins] = useState(() => readStorage(STORAGE_KEYS.checkins, []))
-  const [sessions, setSessions] = useState(() => readStorage(STORAGE_KEYS.sessions, []))
-  const [notes, setNotes] = useState(() => readStorage(STORAGE_KEYS.notes, []))
-  const [encouragements, setEncouragements] = useState(() =>
-    readStorage(STORAGE_KEYS.encouragements, []),
-  )
-  const [activity, setActivity] = useState(() => readStorage(STORAGE_KEYS.activity, []))
+  const { accountType, activeRoom, user } = useAuth()
+  const currentUser = accountType
+  const roomId = activeRoom?.id
+  const userId = user?.id
+  const [roomData, setRoomData] = useState(emptyRoomData)
+  const [dataLoading, setDataLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
   const [pendingSession, setPendingSession] = useState(null)
 
+  const { activity, checkins, encouragements, notes, sessions, tasks } = roomData
+
+  const loadRoom = useCallback(async () => {
+    if (!roomId) return
+
+    setDataLoading(true)
+    setError('')
+
+    try {
+      setRoomData(await fetchRoomData(roomId))
+    } catch (nextError) {
+      setError(nextError.message)
+    } finally {
+      setDataLoading(false)
+    }
+  }, [roomId])
+
+  useEffect(() => {
+    Promise.resolve().then(loadRoom)
+  }, [loadRoom])
+
   const pushActivity = useCallback(
-    (message, type = 'update', actor = currentUser) => {
-      const entry = createActivity(message, type, actor)
-      setActivity((current) => {
-        const next = [entry, ...current].slice(0, 32)
-        writeStorage(STORAGE_KEYS.activity, next)
-        return next
+    async (message, type = 'update', actor = currentUser) => {
+      if (!roomId || !userId) return
+
+      await insertActivity({
+        actor,
+        message,
+        roomId,
+        type,
+        userId,
       })
     },
-    [currentUser],
+    [currentUser, roomId, userId],
   )
 
   const updateTasks = useCallback(
-    (next, message, type) => {
-      setTasks(next)
-      writeStorage(STORAGE_KEYS.tasks, next)
-      pushActivity(message, type)
+    async (next, message, type) => {
+      if (!roomId || !userId) return
+
+      setSaving(true)
+      setError('')
+
+      try {
+        const added = next.find((task) => !tasks.some((current) => current.id === task.id))
+        const removed = tasks.find((task) => !next.some((current) => current.id === task.id))
+        const changed = next.find((task) => {
+          const current = tasks.find((item) => item.id === task.id)
+          return current && current.status !== task.status
+        })
+
+        if (added) {
+          await insertTask({ actor: currentUser, roomId, task: added, userId })
+        } else if (removed) {
+          await deleteTask(removed.id)
+        } else if (changed) {
+          await updateTaskStatus({ status: changed.status, taskId: changed.id })
+        }
+
+        await pushActivity(message, type)
+        await loadRoom()
+      } catch (nextError) {
+        setError(nextError.message)
+      } finally {
+        setSaving(false)
+      }
     },
-    [pushActivity],
+    [currentUser, loadRoom, pushActivity, roomId, tasks, userId],
   )
 
   const updateCheckins = useCallback(
-    (next, entry) => {
-      setCheckins(next)
-      writeStorage(STORAGE_KEYS.checkins, next)
-      pushActivity(`${entry.member} checked in after ${entry.hours}h: ${entry.topic}`, 'checkin', entry.member)
+    async (_next, entry) => {
+      if (!roomId || !userId) return
+
+      setSaving(true)
+      setError('')
+
+      try {
+        await upsertCheckin({ checkin: entry, roomId, userId })
+        await pushActivity(`${entry.member} checked in after ${entry.hours}h: ${entry.topic}`, 'checkin', entry.member)
+        await loadRoom()
+      } catch (nextError) {
+        setError(nextError.message)
+      } finally {
+        setSaving(false)
+      }
     },
-    [pushActivity],
+    [loadRoom, pushActivity, roomId, userId],
   )
 
   const updateSessions = useCallback(
-    (next, message, type) => {
-      setSessions(next)
-      writeStorage(STORAGE_KEYS.sessions, next)
-      pushActivity(message, type)
+    async (next, message, type) => {
+      if (!roomId || !userId) return
+
+      setSaving(true)
+      setError('')
+
+      try {
+        const added = next.find((session) => !sessions.some((current) => current.id === session.id))
+        if (added) {
+          await insertSession({ actor: currentUser, roomId, session: added, userId })
+        }
+
+        await pushActivity(message, type)
+        await loadRoom()
+      } catch (nextError) {
+        setError(nextError.message)
+      } finally {
+        setSaving(false)
+      }
     },
-    [pushActivity],
+    [currentUser, loadRoom, pushActivity, roomId, sessions, userId],
   )
 
   const updateNotes = useCallback(
-    (next, message, type) => {
-      setNotes(next)
-      writeStorage(STORAGE_KEYS.notes, next)
-      pushActivity(message, type)
+    async (next, message, type) => {
+      if (!roomId || !userId) return
+
+      setSaving(true)
+      setError('')
+
+      try {
+        const added = next.find((note) => !notes.some((current) => current.id === note.id))
+        const removed = notes.find((note) => !next.some((current) => current.id === note.id))
+
+        if (added) {
+          await insertNote({ actor: currentUser, note: added, roomId, userId })
+        } else if (removed) {
+          await deleteNote(removed.id)
+        }
+
+        await pushActivity(message, type)
+        await loadRoom()
+      } catch (nextError) {
+        setError(nextError.message)
+      } finally {
+        setSaving(false)
+      }
     },
-    [pushActivity],
+    [currentUser, loadRoom, notes, pushActivity, roomId, userId],
   )
 
   const updateEncouragements = useCallback(
-    (next, message, type) => {
-      setEncouragements(next)
-      writeStorage(STORAGE_KEYS.encouragements, next)
-      pushActivity(message, type)
+    async (next, message, type) => {
+      if (!roomId || !userId) return
+
+      setSaving(true)
+      setError('')
+
+      try {
+        const added = next.find((encouragement) => !encouragements.some((current) => current.id === encouragement.id))
+        if (added) {
+          await insertEncouragement({
+            actor: currentUser,
+            encouragement: added,
+            roomId,
+            userId,
+          })
+        }
+
+        await pushActivity(message, type)
+        await loadRoom()
+      } catch (nextError) {
+        setError(nextError.message)
+      } finally {
+        setSaving(false)
+      }
     },
-    [pushActivity],
+    [currentUser, encouragements, loadRoom, pushActivity, roomId, userId],
   )
 
   const handleFocusComplete = useCallback(
-    (durationMinutes) => {
+    async (durationMinutes) => {
       setPendingSession({ durationMinutes, completedAt: new Date().toISOString() })
-      pushActivity(`${currentUser} finished a ${durationMinutes}-minute focus session.`, 'focus', currentUser)
+      setError('')
+
+      try {
+        await pushActivity(`${currentUser} finished a ${durationMinutes}-minute focus session.`, 'focus', currentUser)
+        await loadRoom()
+      } catch (nextError) {
+        setError(nextError.message)
+      }
     },
-    [currentUser, pushActivity],
+    [currentUser, loadRoom, pushActivity],
   )
 
   const streak = computeCurrentStreak(checkins)
@@ -146,10 +274,12 @@ function PrivateRoomPage() {
   return (
     <main className="page-shell room-page">
       <section className="container">
+        {error ? <p className="form-error">{error}</p> : null}
+        {saving ? <p className="inline-alert">Saving to Supabase...</p> : null}
         <header className="room-header glass-card">
           <div>
             <span className="section-kicker">Private study room</span>
-            <h1>Magic & Partner's Class Room</h1>
+            <h1>{activeRoom?.name || 'Private Study Room'}</h1>
             <p>
               A quiet shared desk for two people: make one promise, leave a trace of effort, and keep
               each other steady.
@@ -193,67 +323,77 @@ function PrivateRoomPage() {
           </div>
         </header>
 
-        <div className="member-row">
-          {memberSummaries.map(({ activeTasks, checkin, latestSession, member }) => (
-            <article
-              className={`room-member-card glass-card ${checkin ? 'is-present' : 'is-waiting'}`}
-              key={member}
-            >
-              <UsersRound size={22} />
-              <div>
-                <div className="member-title-line">
-                  <strong>{member}</strong>
-                  <span className="room-badge mini">
-                    {member === currentUser ? 'You are here' : 'Study partner'}
-                  </span>
+        {dataLoading ? (
+          <section className="glass-card room-card">
+            <span className="section-kicker">Loading</span>
+            <h2>Fetching your Supabase room...</h2>
+            <p className="section-support">Tasks, check-ins, notes, and activity are loading from the database.</p>
+          </section>
+        ) : (
+          <>
+            <div className="member-row">
+              {memberSummaries.map(({ activeTasks, checkin, latestSession, member }) => (
+                <article
+                  className={`room-member-card glass-card ${checkin ? 'is-present' : 'is-waiting'}`}
+                  key={member}
+                >
+                  <UsersRound size={22} />
+                  <div>
+                    <div className="member-title-line">
+                      <strong>{member}</strong>
+                      <span className="room-badge mini">
+                        {member === currentUser ? 'You are here' : 'Study partner'}
+                      </span>
+                    </div>
+                    <span>{checkin ? `${checkin.hours}h logged today` : 'Waiting for a soft check-in'}</span>
+                    <small>
+                      {latestSession
+                        ? `Last session: ${latestSession.subject}, ${latestSession.focusRating}/10 focus`
+                        : 'No session report yet'}
+                    </small>
+                    <small>{activeTasks} active shared task{activeTasks === 1 ? '' : 's'}</small>
+                  </div>
+                </article>
+              ))}
+              <article className="room-member-card glass-card progress-member">
+                <span>{weekProgress}%</span>
+                <div>
+                  <strong>Weekly progress</strong>
+                  <span>20-hour shared target</span>
+                  <small>Every honest block counts.</small>
                 </div>
-                <span>{checkin ? `${checkin.hours}h logged today` : 'Waiting for a soft check-in'}</span>
-                <small>
-                  {latestSession
-                    ? `Last session: ${latestSession.subject}, ${latestSession.focusRating}/10 focus`
-                    : 'No session report yet'}
-                </small>
-                <small>{activeTasks} active shared task{activeTasks === 1 ? '' : 's'}</small>
-              </div>
-            </article>
-          ))}
-          <article className="room-member-card glass-card progress-member">
-            <span>{weekProgress}%</span>
-            <div>
-              <strong>Weekly progress</strong>
-              <span>20-hour shared target</span>
-              <small>Every honest block counts.</small>
+              </article>
             </div>
-          </article>
-        </div>
 
-        <div className="room-main-grid">
-          <div className="room-primary">
-            <CheckInCard checkins={checkins} currentUser={currentUser} onSave={updateCheckins} />
-            <TaskBoard tasks={tasks} onTasksChange={updateTasks} />
-            <div className="two-column">
-              <FocusTimer onComplete={handleFocusComplete} />
-              <SessionFeedback
-                sessions={sessions}
-                currentUser={currentUser}
-                pendingSession={pendingSession}
-                onSessionsChange={updateSessions}
-                onClearPending={() => setPendingSession(null)}
-              />
+            <div className="room-main-grid">
+              <div className="room-primary">
+                <CheckInCard checkins={checkins} currentUser={currentUser} onSave={updateCheckins} />
+                <TaskBoard tasks={tasks} onTasksChange={updateTasks} />
+                <div className="two-column">
+                  <FocusTimer onComplete={handleFocusComplete} />
+                  <SessionFeedback
+                    sessions={sessions}
+                    currentUser={currentUser}
+                    pendingSession={pendingSession}
+                    onSessionsChange={updateSessions}
+                    onClearPending={() => setPendingSession(null)}
+                  />
+                </div>
+                <ProgressStats tasks={tasks} checkins={checkins} sessions={sessions} />
+                <NotesBoard notes={notes} currentUser={currentUser} onNotesChange={updateNotes} />
+                <MockAITools />
+              </div>
+              <div className="room-sidebar">
+                <MotivationBox
+                  encouragements={encouragements}
+                  currentUser={currentUser}
+                  onEncouragementsChange={updateEncouragements}
+                />
+                <ActivityFeed activity={activity} />
+              </div>
             </div>
-            <ProgressStats tasks={tasks} checkins={checkins} sessions={sessions} />
-            <NotesBoard notes={notes} currentUser={currentUser} onNotesChange={updateNotes} />
-            <MockAITools />
-          </div>
-          <div className="room-sidebar">
-            <MotivationBox
-              encouragements={encouragements}
-              currentUser={currentUser}
-              onEncouragementsChange={updateEncouragements}
-            />
-            <ActivityFeed activity={activity} />
-          </div>
-        </div>
+          </>
+        )}
       </section>
     </main>
   )

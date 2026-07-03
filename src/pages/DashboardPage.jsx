@@ -1,47 +1,92 @@
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { CalendarCheck, CheckCircle2, Clock3, LockKeyhole, Sparkles, TimerReset } from 'lucide-react'
 import StatCard from '../components/StatCard'
-import {
-  STORAGE_KEYS,
-  canEnterPrivateRoom,
-  computeCurrentStreak,
-  ensureDemoData,
-  getStoredUser,
-  readStorage,
-  todayKey,
-} from '../data/storage'
+import { useAuth } from '../context/useAuth'
+import { fetchDashboardData } from '../data/supabaseData'
+import { computeCurrentStreak, isPrivateAccountType, todayKey } from '../data/studyUtils'
+
+const emptyDashboardData = {
+  checkins: [],
+  sessions: [],
+  tasks: [],
+}
 
 function DashboardPage() {
-  ensureDemoData()
+  const { accountType, activeRoom, authConfigured, error: authError, loading, roomLoading, user } = useAuth()
+  const privateAccount = isPrivateAccountType(accountType)
+  const roomId = privateAccount ? activeRoom?.id : null
+  const [dashboardData, setDashboardData] = useState(emptyDashboardData)
+  const [dataLoading, setDataLoading] = useState(false)
+  const [error, setError] = useState('')
 
-  const user = getStoredUser()
-  const tasks = readStorage(STORAGE_KEYS.tasks, [])
-  const checkins = readStorage(STORAGE_KEYS.checkins, [])
-  const sessions = readStorage(STORAGE_KEYS.sessions, [])
+  useEffect(() => {
+    if (!roomId) {
+      return
+    }
+
+    let mounted = true
+
+    Promise.resolve().then(async () => {
+      setDataLoading(true)
+      setError('')
+
+      try {
+        const data = await fetchDashboardData(roomId)
+        if (!mounted) return
+        setDashboardData(data)
+      } catch (nextError) {
+        if (!mounted) return
+        setError(nextError.message)
+      } finally {
+        if (mounted) {
+          setDataLoading(false)
+        }
+      }
+    })
+
+    return () => {
+      mounted = false
+    }
+  }, [roomId])
+
+  const displayData = roomId ? dashboardData : emptyDashboardData
+  const { checkins, sessions, tasks } = displayData
   const today = todayKey()
-  const isGuest = user === 'Guest'
-  const visibleTasks = isGuest
-    ? tasks.slice(0, 3)
-    : tasks.filter((task) => task.owner === user || task.owner === 'Both').slice(0, 4)
-  const todayCheckin = checkins.find((checkin) => checkin.member === user && checkin.date === today)
+  const signedOut = !user
+  const studentMode = signedOut || !privateAccount
+  const visibleTasks = useMemo(() => {
+    if (studentMode) return []
+
+    return tasks
+      .filter((task) => task.owner === accountType || task.owner === 'Both')
+      .slice(0, 4)
+  }, [accountType, studentMode, tasks])
+  const todayCheckin = checkins.find((checkin) => checkin.member === accountType && checkin.date === today)
   const completedTasks = tasks.filter((task) => task.status === 'Done').length
   const streak = computeCurrentStreak(checkins)
-  const privateReady = canEnterPrivateRoom(user)
+  const privateReady = Boolean(user && privateAccount && activeRoom)
+  const busy = loading || roomLoading || dataLoading
 
   return (
     <main className="page-shell dashboard-page">
       <section className="container dashboard-grid">
         <div className="glass-card welcome-card">
           <span className="section-kicker">Dashboard</span>
-          <h1>Welcome back, {user}</h1>
+          <h1>Welcome back, {signedOut ? 'Student' : accountType}</h1>
           <p>
-            {isGuest
-              ? 'You are viewing a limited public demo. Choose Magic or Partner and enter the passcode to open the private room.'
-              : 'Your study room is ready. Check the day, pick the next task, and start a focused session.'}
+            {signedOut
+              ? 'You are viewing the public study dashboard. Sign in to save a profile and manage private room access.'
+              : privateAccount
+                ? 'Your study profile is connected to Supabase. Check the day, pick the next task, and start a focused session.'
+                : 'Your Student profile can use public study pages and dashboard previews. Private rooms unlock with Couples or VIP.'}
           </p>
+          {!authConfigured ? <p className="form-error">{authError}</p> : null}
+          {error ? <p className="form-error">{error}</p> : null}
+          {busy ? <p className="inline-alert">Loading Supabase data...</p> : null}
           <div className="welcome-actions">
-            <Link className="btn glow-btn" to={privateReady ? '/our-room' : '/access'}>
-              {privateReady ? 'Go to Private Room' : 'Unlock Private Room'}
+            <Link className="btn glow-btn" to={signedOut ? '/access' : '/our-room'}>
+              {privateReady ? 'Go to Private Room' : signedOut ? 'Sign In to Save Progress' : 'Check Room Access'}
             </Link>
             <Link className="btn soft-btn" to="/features">
               Explore Features
@@ -64,7 +109,7 @@ function DashboardPage() {
             detail={`${tasks.length} total tasks`}
             accent="blue"
           />
-          <StatCard icon={Sparkles} label="Study streak" value={`${streak}d`} detail="Shared room preview" accent="pink" />
+          <StatCard icon={Sparkles} label="Study streak" value={`${streak}d`} detail="Shared room rhythm" accent="pink" />
           <StatCard
             icon={Clock3}
             label="Recent sessions"
@@ -96,7 +141,9 @@ function DashboardPage() {
                 </article>
               ))
             ) : (
-              <p className="empty-state">No tasks yet.</p>
+              <p className="empty-state">
+                {studentMode ? 'Private tasks appear for Couples and VIP rooms.' : 'No tasks yet. Add one in the private room.'}
+              </p>
             )}
           </div>
         </section>
@@ -123,23 +170,33 @@ function DashboardPage() {
                 </article>
               ))
             ) : (
-              <p className="empty-state">No sessions yet. Complete a focus sprint to see reports here.</p>
+              <p className="empty-state">
+                {studentMode ? 'Private session reports appear after room access.' : 'No sessions yet. Complete a focus sprint first.'}
+              </p>
             )}
           </div>
         </section>
 
-        <section className={`glass-card private-preview ${isGuest ? 'locked' : ''}`}>
+        <section className={`glass-card private-preview ${privateReady ? '' : 'locked'}`}>
           <LockKeyhole size={28} aria-hidden="true" />
           <div>
-            <h2>{isGuest ? 'Private room locked for guests' : 'Magic & Partner room'}</h2>
+            <h2>
+              {privateReady
+                ? activeRoom.name
+                : privateAccount
+                  ? 'Private room setup is waiting'
+                  : 'Private rooms are for Couples and VIP'}
+            </h2>
             <p>
-              {isGuest
-                ? 'Guest mode can explore the public dashboard, but the private room needs Magic or Partner access.'
-                : 'Use the room for check-ins, shared tasks, notes, mock AI tools, and activity tracking.'}
+              {privateReady
+                ? 'Use the room for check-ins, shared tasks, notes, mock AI tools, and activity tracking.'
+                : privateAccount
+                  ? 'Open Our Room to create your Supabase-backed private study space.'
+                  : 'Stay in Student mode for public pages, or switch to Couples/VIP from Access when you want a private room.'}
             </p>
           </div>
-          <Link className="btn glow-btn" to={privateReady ? '/our-room' : '/access'}>
-            {privateReady ? 'Enter Room' : 'Open Access'}
+          <Link className="btn glow-btn" to={privateReady || user ? '/our-room' : '/access'}>
+            {privateReady ? 'Enter Room' : user ? 'View Room Status' : 'Open Access'}
           </Link>
         </section>
       </section>

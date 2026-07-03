@@ -1,20 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { BookOpen, LayoutDashboard, LockKeyhole, Menu, Sparkles, X } from 'lucide-react'
-import { getStoredUser } from '../data/storage'
+import { useAuth } from '../context/useAuth'
 
 function Navbar() {
   const [open, setOpen] = useState(false)
-  const [, setUserTick] = useState(0)
   const location = useLocation()
-
-  useEffect(() => {
-    const syncUser = () => setUserTick((current) => current + 1)
-    window.addEventListener('classroom-user-change', syncUser)
-    return () => window.removeEventListener('classroom-user-change', syncUser)
-  }, [])
-
-  const user = getStoredUser()
+  const { accountType, user } = useAuth()
   const closeMenu = () => setOpen(false)
 
   return (
@@ -69,7 +61,7 @@ function Navbar() {
             <li className="nav-item ms-lg-2">
               <NavLink className="btn btn-sm glow-btn" to="/access" onClick={closeMenu}>
                 <Sparkles size={16} />
-                {user}
+                {user ? accountType : 'Sign in'}
               </NavLink>
             </li>
           </ul>

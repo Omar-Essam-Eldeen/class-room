@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { MessageSquareText, Save, TrendingUp } from 'lucide-react'
-import { createId, formatTime } from '../data/storage'
+import { createId, formatTime } from '../data/studyUtils'
 
 function SessionFeedback({ sessions, currentUser, pendingSession, onSessionsChange, onClearPending }) {
   const [form, setForm] = useState({

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { BookOpenCheck, LockKeyhole, NotebookPen, Save, Share2, Trash2 } from 'lucide-react'
-import { createId, formatTime } from '../data/storage'
+import { createId, formatTime } from '../data/studyUtils'
 
 function NotesBoard({ notes, currentUser, onNotesChange }) {
   const [form, setForm] = useState({ title: '', content: '', visibility: 'Shared' })

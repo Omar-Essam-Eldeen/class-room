@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { CheckCircle2, HeartPulse, Save, SmilePlus } from 'lucide-react'
-import { MEMBERS, createId, todayKey } from '../data/storage'
+import { MEMBERS, createId, todayKey } from '../data/studyUtils'
 
 const moods = ['Focused', 'Happy', 'Tired', 'Stressed', 'Motivated']
 const moodNotes = {
@@ -13,7 +13,7 @@ const moodNotes = {
 
 function CheckInCard({ checkins, currentUser, onSave }) {
   const [form, setForm] = useState({
-    member: MEMBERS.includes(currentUser) ? currentUser : 'Magic',
+    member: MEMBERS.includes(currentUser) ? currentUser : MEMBERS[0],
     studied: true,
     hours: '1',
     mood: 'Focused',

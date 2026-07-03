@@ -58,8 +58,8 @@ function HeroSection() {
                 </div>
               </div>
               <div className="mini-members">
-                <span>Magic</span>
-                <span>Partner</span>
+                <span>VIP</span>
+                <span>Couples</span>
               </div>
             </div>
           </div>

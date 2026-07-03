@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { HeartHandshake, Send, Sparkles } from 'lucide-react'
-import { createId, formatTime } from '../data/storage'
+import { createId, formatTime } from '../data/studyUtils'
 
 const quotes = [
   'Consistency beats intensity when the goal is a life you can actually keep.',

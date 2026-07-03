@@ -9,11 +9,11 @@ function AccessDeniedPage() {
           <div className="locked-icon" aria-hidden="true">
             <LockKeyhole size={36} />
           </div>
-          <span className="section-kicker">Access denied</span>
-          <h1>This room is private.</h1>
+          <span className="section-kicker">Private room</span>
+          <h1>Room access needs a quick check.</h1>
           <p>
-            Magic and Partner can enter after choosing their demo identity and submitting the
-            prototype passcode.
+            Sign in, choose a Couples or VIP profile, and open Our Room. If you do not have a room
+            yet, Class Room will guide you through creating one.
           </p>
           <div className="locked-actions">
             <Link className="btn glow-btn" to="/access">

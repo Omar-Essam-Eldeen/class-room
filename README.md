@@ -1,8 +1,8 @@
 # Class Room
 
-Class Room is a cozy study dashboard prototype for two people who want to study together with more focus, accountability, and encouragement. The app centers on a private shared room for Magic and Partner, where both people can check in, track study progress, manage tasks, run focus sprints, save notes, reflect on sessions, and leave motivational messages.
+Class Room is a cozy study dashboard prototype for people who want to study with more focus, accountability, and encouragement. The app centers on account types: Student for public study tools, and Couples or VIP for private shared rooms where members can check in, track study progress, manage tasks, run focus sprints, save notes, reflect on sessions, and leave motivational messages.
 
-This is currently a frontend prototype. It uses local browser storage to simulate accounts, private access, room data, activity, and study history.
+This is currently a Supabase-backed React prototype. It uses Supabase Auth for accounts, Supabase Postgres for room data, and Row Level Security policies to protect private room records.
 
 ## App Idea
 
@@ -25,7 +25,7 @@ Instead of being only a task tracker, the app combines practical study tools wit
 
 - Landing page with a product overview and demo entry points.
 - Features page describing the study tools.
-- Access page for choosing a demo user and unlocking the private room.
+- Access page for Supabase sign up, login, logout, and account-type selection.
 - Dashboard page with a broader study overview.
 - Access denied page for users without private-room access.
 
@@ -34,7 +34,7 @@ Instead of being only a task tracker, the app combines practical study tools wit
 The `/our-room` page is the heart of the prototype. It includes:
 
 - Room header with shared streak, weekly progress, today check-ins, and next-step badges.
-- Member cards for Magic and Partner with current status, active tasks, and latest session context.
+- Member cards for VIP and Couples with current status, active tasks, and latest session context.
 - Daily check-ins with mood, hours studied, and study notes.
 - Shared task board with Todo, Doing, and Done columns.
 - Focus timer with 25, 45, and 60 minute presets.
@@ -50,11 +50,50 @@ The `/our-room` page is the heart of the prototype. It includes:
 - React
 - Vite
 - React Router
+- Supabase Auth
+- Supabase Postgres
+- Supabase Row Level Security
 - Bootstrap utility/grid classes
 - Lucide React icons
 - CSS custom styling with responsive layouts
-- Browser `localStorage` for prototype persistence
 - ESLint for code checks
+
+## Supabase Setup
+
+Create a Supabase project, then run the SQL in:
+
+```text
+supabase-schema.sql
+```
+
+The schema creates:
+
+- `profiles`
+- `rooms`
+- `room_members`
+- `tasks`
+- `checkins`
+- `study_sessions`
+- `notes`
+- `encouragements`
+- `activity`
+
+It also enables Row Level Security so only room members can read or write room data.
+
+Create a local environment file:
+
+```bash
+cp .env.example .env
+```
+
+Then fill in:
+
+```text
+VITE_SUPABASE_URL=your-supabase-project-url
+VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
+```
+
+Only use the public Supabase anon key in the frontend. Do not put service-role keys or other secrets in Vite environment variables.
 
 ## Local Setup
 
@@ -104,80 +143,65 @@ The project includes deployment configuration for static SPA hosting:
 
 These files are important because Class Room uses React Router. Without an SPA fallback, routes such as `/features`, `/dashboard`, and `/our-room` may work during navigation but fail when the browser refreshes directly on that URL.
 
-## Demo Access
+## Account Access
 
-The private room is protected by a prototype-only access flow.
+Class Room uses real Supabase Auth accounts plus a profile `account_type`.
 
-Demo users:
+Available account types:
 
-- Magic
-- Partner
-- Guest
+- Student: can access public pages and the dashboard, but cannot create or enter a private room.
+- Couples: can create or access a Couples private study room.
+- VIP: can create or access a VIP private study room.
 
-Private room passcode:
+Clicking Student, Couples, or VIP while logged in updates the signed-in user's Supabase profile. Student is not a logout mode.
 
-```text
-CLASSROOM2026
-```
-
-Guests can explore public pages, but only Magic or Partner with the passcode can enter `/our-room`.
+To enter `/our-room`, a user must be signed in, have a Couples or VIP profile, and belong to the room through `room_members`. If a Couples/VIP user has no membership yet, `/our-room` shows a friendly setup screen with **Create My Private Room**. That action creates a `rooms` row, adds the current user to `room_members` as `owner`, and then opens the private room.
 
 ## Current Prototype Limitations
 
-- Data is stored in `localStorage`, so it is browser-specific and not shared across devices.
-- Authentication is simulated with demo users and a visible passcode.
-- The private room is not truly secure yet.
+- Supabase must be configured before sign up, login, and room data will work.
+- The app creates private rooms only when a Couples or VIP user clicks **Create My Private Room**.
+- A production invite/join flow for adding a second real user to the same room still needs to be built.
 - Mock AI tools do not call a real AI API.
-- There is no backend database.
-- There is no real-time sync between two users.
-- There are no production user profiles, invitations, password reset flows, or email verification.
-- Activity history and room content can be cleared if browser storage is reset.
+- Real-time room sync is not wired yet.
+- Password reset and email verification settings depend on Supabase project configuration.
 - The app is not yet connected to analytics, monitoring, or error reporting.
 
 ## Next Production Steps
 
 ### 1. Supabase Auth
 
-Replace the demo user/passcode flow with Supabase Auth.
+Supabase Auth is wired into the frontend. Next production refinements:
 
 Recommended work:
 
-- Add sign up, sign in, sign out, and password reset.
-- Support email verification.
-- Create user profiles for each student.
+- Configure email templates and redirect URLs in Supabase.
+- Add password reset UI.
+- Add profile editing.
 - Add room membership and invite flows.
-- Redirect unauthenticated users away from private routes.
+- Decide whether email confirmation is required before private room access.
 
 ### 2. Supabase Database
 
-Move all room data out of `localStorage` and into Supabase Postgres.
+Room data now uses Supabase Postgres tables.
 
-Suggested tables:
+Production refinements:
 
-- `profiles`
-- `rooms`
-- `room_members`
-- `checkins`
-- `tasks`
-- `focus_sessions`
-- `session_reports`
-- `notes`
-- `encouragements`
-- `activity_events`
-
-This would allow two people to see the same room data across devices.
+- Add migrations through the Supabase CLI.
+- Add seed data for development.
+- Add indexes for high-traffic room queries.
+- Add archive/delete flows for rooms.
 
 ### 3. Row Level Security
 
-Enable Supabase Row Level Security for every table that contains user or room data.
+The starter SQL enables Row Level Security for every private table.
 
-Recommended policies:
+Production refinements:
 
-- Users can read only rooms where they are members.
-- Users can create room content only for rooms they belong to.
-- Users can update/delete only their own notes, reports, and check-ins unless a shared-room rule allows otherwise.
-- Room members can read shared notes and activity events.
-- Private notes are visible only to their owner.
+- Test policies with multiple real accounts.
+- Add admin/owner policies for membership management.
+- Add invite-code or email-invite policies.
+- Confirm private notes remain visible only to their owner.
 
 ### 4. Real AI API Through Serverless Functions
 
@@ -220,9 +244,9 @@ Netlify path:
 
 ## Production Readiness Checklist
 
-- Replace prototype auth with Supabase Auth.
-- Replace `localStorage` with Supabase database reads/writes.
-- Add RLS policies and test them with multiple users.
+- Configure Supabase environment variables.
+- Run `supabase-schema.sql`.
+- Test RLS policies with multiple users.
 - Add loading, error, and empty states for real network requests.
 - Add serverless AI endpoints.
 - Add input validation on both client and server.
@@ -234,4 +258,4 @@ Netlify path:
 
 ## Project Status
 
-Class Room is a polished React + Vite prototype. It is ready for local demos, UX iteration, and production architecture planning. The next major milestone is replacing local prototype state with real authentication, database persistence, secure access rules, and server-side AI features.
+Class Room is a polished React + Vite prototype upgraded to Supabase Auth, Supabase database persistence, and Row Level Security. The next major milestone is adding production invite flows, real AI serverless functions, realtime room sync, and deployment environment configuration.

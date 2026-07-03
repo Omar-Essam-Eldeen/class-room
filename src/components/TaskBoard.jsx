@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { CalendarDays, Circle, ListPlus, Trash2 } from 'lucide-react'
-import { MEMBERS, createId, formatShortDate } from '../data/storage'
+import { MEMBERS, createId, formatShortDate } from '../data/studyUtils'
 
 const owners = [...MEMBERS, 'Both']
 const priorities = ['Low', 'Medium', 'High']

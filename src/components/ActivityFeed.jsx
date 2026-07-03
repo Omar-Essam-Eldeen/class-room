@@ -1,5 +1,5 @@
 import { Activity, CheckCircle2, HeartHandshake, MessageSquareText, TimerReset } from 'lucide-react'
-import { formatTime } from '../data/storage'
+import { formatTime } from '../data/studyUtils'
 
 const typeIcons = {
   checkin: CheckCircle2,

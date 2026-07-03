@@ -1,6 +1,6 @@
 import { BarChart3, CheckCircle2, Clock3, Flame, NotebookTabs, Target } from 'lucide-react'
 import StatCard from './StatCard'
-import { computeCurrentStreak, getWeekHours } from '../data/storage'
+import { computeCurrentStreak, getWeekHours } from '../data/studyUtils'
 
 function ProgressStats({ tasks, checkins, sessions }) {
   const completedTasks = tasks.filter((task) => task.status === 'Done').length
