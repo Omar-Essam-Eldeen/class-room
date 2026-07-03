@@ -12,9 +12,35 @@ import { getAccountType, getAccountTypeLabel, getDisplayName, getEffectiveAccoun
 import { AuthContext } from './authContextValue'
 
 const ACTIVE_ROOM_KEY = 'classroom-active-room-id'
+const AUTH_REQUEST_TIMEOUT_MS = 20000
+const WORKSPACE_REQUEST_TIMEOUT_MS = 12000
 
 function getAuthErrorMessage(error) {
   return error?.message || 'Something went wrong with authentication.'
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  let timeoutId
+  const timeout = new Promise((_, reject) => {
+    timeoutId = globalThis.setTimeout(() => reject(new Error(message)), timeoutMs)
+  })
+
+  return Promise.race([promise, timeout]).finally(() => {
+    globalThis.clearTimeout(timeoutId)
+  })
+}
+
+function createFallbackProfile(user, accountType = '') {
+  const fallbackAccountType = getAccountType({ account_type: accountType }, user)
+
+  return {
+    account_type: fallbackAccountType,
+    display_name: user?.user_metadata?.display_name || getAccountTypeLabel(fallbackAccountType),
+    email: user?.email || '',
+    id: user?.id || '',
+    public_badge_count: 0,
+    stars: 0,
+  }
 }
 
 function readActiveRoomPreference() {
@@ -61,17 +87,32 @@ export function AuthProvider({ children }) {
     setError('')
 
     try {
-      const nextProfile = await upsertProfile(nextSession.user, preferredAccountType)
+      const nextProfile = await withTimeout(
+        upsertProfile(nextSession.user, preferredAccountType),
+        WORKSPACE_REQUEST_TIMEOUT_MS,
+        'Profile loading timed out. Your account exists, but the profile request did not finish.',
+      )
       const nextAccountType = getEffectiveAccountType(nextProfile, nextSession.user)
-      const memberships = await fetchUserRooms(nextSession.user.id)
+      let memberships = []
+
+      try {
+        memberships = await withTimeout(
+          fetchUserRooms(nextSession.user.id),
+          WORKSPACE_REQUEST_TIMEOUT_MS,
+          'Room loading timed out. Your account is signed in, but rooms could not finish loading.',
+        )
+      } catch (workspaceError) {
+        setError(getAuthErrorMessage(workspaceError))
+      }
+
       const activeMembership = chooseActiveMembership(memberships, nextAccountType)
       setProfile(nextProfile)
       setUserRooms(memberships)
       setActiveRoom(activeMembership?.room || null)
       setMembershipRole(activeMembership?.role || '')
     } catch (nextError) {
-      setError(nextError.message)
-      setProfile(null)
+      setError(getAuthErrorMessage(nextError))
+      setProfile(createFallbackProfile(nextSession.user, preferredAccountType))
       setActiveRoom(null)
       setMembershipRole('')
       setUserRooms([])
@@ -87,16 +128,33 @@ export function AuthProvider({ children }) {
 
     let mounted = true
 
-    supabase.auth.getSession().then(async ({ data, error: sessionError }) => {
-      if (!mounted) return
+    Promise.resolve().then(async () => {
+      try {
+        const { data, error: sessionError } = await withTimeout(
+          supabase.auth.getSession(),
+          AUTH_REQUEST_TIMEOUT_MS,
+          'Supabase session check timed out. Refresh the page and try again.',
+        )
 
-      if (sessionError) {
-        setError(getAuthErrorMessage(sessionError))
+        if (!mounted) return
+
+        if (sessionError) {
+          setError(getAuthErrorMessage(sessionError))
+        }
+
+        setSession(data.session)
+        await loadUserWorkspace(data.session)
+      } catch (nextError) {
+        if (mounted) {
+          setError(getAuthErrorMessage(nextError))
+          setSession(null)
+          await loadUserWorkspace(null)
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false)
+        }
       }
-
-      setSession(data.session)
-      await loadUserWorkspace(data.session)
-      setLoading(false)
     })
 
     const {
@@ -118,28 +176,38 @@ export function AuthProvider({ children }) {
 
       const accountTypeLabel = getAccountTypeLabel(accountType)
       setError('')
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            account_type: accountType,
-            display_name: accountTypeLabel,
-          },
-        },
-      })
 
-      if (signUpError) {
-        setError(getAuthErrorMessage(signUpError))
-        throw signUpError
+      try {
+        const { data, error: signUpError } = await withTimeout(
+          supabase.auth.signUp({
+            email,
+            password,
+            options: {
+              data: {
+                account_type: accountType,
+                display_name: accountTypeLabel,
+              },
+            },
+          }),
+          AUTH_REQUEST_TIMEOUT_MS,
+          'Signup timed out. Supabase did not respond within 20 seconds.',
+        )
+
+        if (signUpError) {
+          throw signUpError
+        }
+
+        if (data.session) {
+          setSession(data.session)
+          await loadUserWorkspace(data.session, accountType)
+        }
+
+        return data
+      } catch (nextError) {
+        const message = getAuthErrorMessage(nextError)
+        setError(message)
+        throw new Error(message, { cause: nextError })
       }
-
-      if (data.session) {
-        setSession(data.session)
-        await loadUserWorkspace(data.session, accountType)
-      }
-
-      return data
     },
     [loadUserWorkspace],
   )
@@ -149,16 +217,25 @@ export function AuthProvider({ children }) {
       if (!isSupabaseConfigured) throw new Error(getSupabaseConfigError())
 
       setError('')
-      const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password })
+      try {
+        const { data, error: signInError } = await withTimeout(
+          supabase.auth.signInWithPassword({ email, password }),
+          AUTH_REQUEST_TIMEOUT_MS,
+          'Login timed out. Supabase did not respond within 20 seconds.',
+        )
 
-      if (signInError) {
-        setError(getAuthErrorMessage(signInError))
-        throw signInError
+        if (signInError) {
+          throw signInError
+        }
+
+        setSession(data.session)
+        await loadUserWorkspace(data.session)
+        return data
+      } catch (nextError) {
+        const message = getAuthErrorMessage(nextError)
+        setError(message)
+        throw new Error(message, { cause: nextError })
       }
-
-      setSession(data.session)
-      await loadUserWorkspace(data.session)
-      return data
     },
     [loadUserWorkspace],
   )

@@ -296,30 +296,29 @@ set search_path = public
 as $$
 declare
   next_account_type text;
+  next_display_name text;
 begin
   next_account_type := lower(coalesce(new.raw_user_meta_data->>'account_type', 'student'));
   if next_account_type not in ('student', 'couples', 'vip') then
     next_account_type := 'student';
   end if;
 
+  next_display_name := nullif(trim(coalesce(new.raw_user_meta_data->>'display_name', '')), '');
+
   insert into public.profiles (id, email, display_name, account_type)
   values (
     new.id,
     new.email,
-    coalesce(new.raw_user_meta_data->>'display_name', split_part(new.email, '@', 1), 'Student'),
+    coalesce(next_display_name, split_part(new.email, '@', 1), 'Student'),
     next_account_type
   )
-  on conflict (id) do update
-  set email = excluded.email,
-      display_name = coalesce(public.profiles.display_name, excluded.display_name),
-      account_type = case
-        when public.profiles.account_type in ('student', 'couples', 'vip')
-          then public.profiles.account_type
-        else excluded.account_type
-      end,
-      updated_at = now();
+  on conflict (id) do nothing;
 
   return new;
+exception
+  when others then
+    raise warning 'handle_new_user skipped profile insert for user %: %', new.id, sqlerrm;
+    return new;
 end;
 $$;
 

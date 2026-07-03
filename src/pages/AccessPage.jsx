@@ -44,6 +44,7 @@ function AccessPage() {
   const [submitting, setSubmitting] = useState(false)
   const navigate = useNavigate()
   const selectedAccountType = user ? realAccountType : draftAccountType
+  const contextError = authConfigured && authError && authError !== error ? authError : ''
 
   const updateField = (field, value) => {
     setForm((current) => ({ ...current, [field]: value }))
@@ -94,10 +95,10 @@ function AccessPage() {
         })
 
         if (result.session) {
-          setMessage('Account created and signed in. Your account type is locked to this profile.')
+          setMessage('Account created and signed in.')
           navigate(getHomeRoute(selectedAccountType))
         } else {
-          setMessage('Account created. Check your email if confirmation is enabled in Supabase.')
+          setMessage('Account created. Please check your email, then log in.')
         }
       } else {
         await signIn({
@@ -159,6 +160,7 @@ function AccessPage() {
           </div>
 
           {!authConfigured ? <p className="form-error">{authError}</p> : null}
+          {contextError ? <p className="form-error">{contextError}</p> : null}
 
           <div className="user-choice-grid" role="group" aria-label="Choose account type">
             {ACCOUNT_TYPES.map((type) => (
